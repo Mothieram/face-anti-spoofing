@@ -8,6 +8,12 @@ from    torch import nn
 import  torch.nn.functional as F
 from    torchvision import transforms
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+WEIGHTS_DIR = os.path.join(BASE_DIR, "weights")
+
+def _weights_path(filename):
+    return os.path.join(WEIGHTS_DIR, filename)
+
 # def preprocess_face_image(img, face_bbox):
 #     x, y, x1, y1,p = face_bbox
 #     w, h = x1-x, y1-y
@@ -66,7 +72,9 @@ def resizeImage(img, input_size=(640,640)):
 
 
 class YOLOv8_face:
-    def __init__(self,model_file ='models/yolov8n-face.onnx', conf_thres=0.4, iou_thres=0.5,device='AUTO',engine='onnx'):
+    def __init__(self,model_file =None, conf_thres=0.4, iou_thres=0.5,device='AUTO',engine='onnx'):
+        if model_file is None:
+            model_file = _weights_path("yolov8n-face.onnx")
         self.conf_threshold = conf_thres
         self.iou_threshold = iou_thres
         # Initialize model
@@ -511,7 +519,7 @@ class Framework(nn.Module):
 
 class aFaceDetect:
     def __init__(self):
-        self.detector   = YOLOv8_face('weights/yolov8n-face.onnx')
+        self.detector   = YOLOv8_face(_weights_path("yolov8n-face.onnx"))
     def __call__(self,image):
         det_img,det_scale,origin=resizeImage(image)
         if det_img is None:
@@ -524,7 +532,7 @@ class aSpoof:
         self.device     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.crop       = 0.7 if model_name in ['ICM2O','IOM2C'] else 0
         self.threshold  = threshold
-        checkpoint      = torch.load(f'weights/{model_name}.pth.tar', map_location='cpu')
+        checkpoint      = torch.load(_weights_path(f'{model_name}.pth.tar'), map_location='cpu')
         # transform       = {'image_size': 256, 'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}
         transform       = checkpoint['args'].transform
         model_defs      = checkpoint['args'].model
@@ -554,7 +562,7 @@ class aSpoof:
 
 class aSpoofONNX:
     def __init__(self,model_name='modelrgb',threshold=0.5):
-        model_file=f'weights/{model_name}.onnx'
+        model_file = _weights_path(f'{model_name}.onnx')
         providers=['CUDAExecutionProvider','CPUExecutionProvider']
         self.session         = ort.InferenceSession(model_file, providers=providers)
         self.inputs          = self.session.get_inputs()
@@ -562,7 +570,7 @@ class aSpoofONNX:
         self.input_names     = [i.name for i in self.inputs]
         self.output_names    = [o.name for o in self.outputs]
         self.device          = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.detector        = YOLOv8_face('weights/yolov8n-face.onnx')
+        self.detector        = YOLOv8_face(_weights_path("yolov8n-face.onnx"))
         self.crop            = 1.5
         self.threshold       = threshold
     def __call__(self,image,bbox,landmarks): # image RGB 
