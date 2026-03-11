@@ -5,6 +5,12 @@ import sys
 import cv2
 import numpy as np
 import gradio as gr
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODULE_DIR = os.path.join(BASE_DIR, "face-antispoofing")
+if MODULE_DIR not in sys.path:
+    sys.path.insert(0, MODULE_DIR)
+
 import IADG
 import SASF
 
