@@ -40,6 +40,14 @@ def prob(p, thre):
         return (thre - p) / thre
     return (p - thre) / (1 - thre)
 
+def _to_label_index(value):
+    # Normalize numpy/tensor/scalar booleans to a plain Python index.
+    try:
+        idx = int(np.asarray(value).reshape(-1)[0])
+    except Exception:
+        idx = int(bool(value))
+    return 1 if idx else 0
+
 
 def run_image(input_image, text):  # input_image - RGB
     if input_image is None or not hasattr(input_image, "shape"):
@@ -71,6 +79,10 @@ def run_image(input_image, text):  # input_image - RGB
     spoof2, spoof_prob2, img2 = Model2(input_image, bboxes[0], landmarks[0])
     spoof3, spoof_prob3, img3 = Model3(input_image, bboxes[0], landmarks[0])
     spoof4, spoof_prob4, img4 = Model4(input_image, bboxes[0], landmarks[0])
+    spoof1 = _to_label_index(spoof1)
+    spoof2 = _to_label_index(spoof2)
+    spoof3 = _to_label_index(spoof3)
+    spoof4 = _to_label_index(spoof4)
 
     names = ['Real photo', 'Spoof']
     text = f'SASF :\t P={spoof_prob1:.4f} ({names[spoof1]}). Confidence: {prob(spoof_prob1, Model1.threshold)}\n'
