@@ -2,6 +2,7 @@ import logging
 import os
 import time
 import sys
+import traceback
 import cv2
 import numpy as np
 import gradio as gr
@@ -16,6 +17,7 @@ import SASF
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+MODEL_LOAD_ERROR = None
 
 try:
     ModelD = IADG.aFaceDetect()
@@ -24,7 +26,8 @@ try:
     Model3 = IADG.aSpoof('ICM2O', threshold=0.9980)
     Model4 = IADG.aSpoof('IOM2C', threshold=0.9944)
 except Exception as e:
-    logger.error(f"Error loading models: {e}")
+    MODEL_LOAD_ERROR = f"{type(e).__name__}: {e}"
+    logger.error("Error loading models:\n%s", traceback.format_exc())
     ModelD = None
     Model1 = None
     Model2 = None
@@ -43,7 +46,11 @@ def run_image(input_image, text):  # input_image - RGB
         return None, None, "Please upload an image first."
     
     if ModelD is None:
-        return None, None, "Models failed to load. Ensure the 'weights' folder is present in the Space."
+        return None, None, (
+            "Models failed to load. "
+            "Check that `face-antispoofing/weights` exists and all dependencies are installed. "
+            f"Startup error: {MODEL_LOAD_ERROR or 'unknown'}"
+        )
 
     try:
         thre = [float(v.strip()) for v in text.split('\n') if v.strip()]
