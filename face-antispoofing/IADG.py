@@ -14,6 +14,15 @@ WEIGHTS_DIR = os.path.join(BASE_DIR, "weights")
 def _weights_path(filename):
     return os.path.join(WEIGHTS_DIR, filename)
 
+def _load_checkpoint(path, map_location="cpu"):
+    # PyTorch >=2.6 defaults torch.load(..., weights_only=True), which breaks
+    # legacy checkpoints containing objects like OmegaConf DictConfig.
+    try:
+        return torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:
+        # Older torch versions do not support the weights_only argument.
+        return torch.load(path, map_location=map_location)
+
 # def preprocess_face_image(img, face_bbox):
 #     x, y, x1, y1,p = face_bbox
 #     w, h = x1-x, y1-y
@@ -532,7 +541,7 @@ class aSpoof:
         self.device     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.crop       = 0.7 if model_name in ['ICM2O','IOM2C'] else 0
         self.threshold  = threshold
-        checkpoint      = torch.load(_weights_path(f'{model_name}.pth.tar'), map_location='cpu')
+        checkpoint      = _load_checkpoint(_weights_path(f'{model_name}.pth.tar'), map_location='cpu')
         # transform       = {'image_size': 256, 'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}
         transform       = checkpoint['args'].transform
         model_defs      = checkpoint['args'].model
