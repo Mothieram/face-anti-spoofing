@@ -1,10 +1,12 @@
 import cv2
 import numpy as np
+import os
 from src.anti_spoof_predict import AntiSpoofPredict
 from src.generate_patches import CropImage
 from src.utility import parse_model_name
 modelSASF = AntiSpoofPredict(0)
 image_cropper = CropImage()
+WEIGHTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "weights")
 
 class aSASF:
     def __init__(self,threshold=0.085):
@@ -23,7 +25,7 @@ class aSASF:
             h_input, w_input, model_type, scale = parse_model_name(model_name)
             param = {"org_img": imageBGR,"bbox": bbox,"scale": scale,"out_w": w_input,"out_h": h_input,"crop": True}
             img[index] = image_cropper.crop(**param)
-            pred=modelSASF.predict(img[index], 'weights/'+model_name)
+            pred=modelSASF.predict(img[index], os.path.join(WEIGHTS_DIR, model_name))
             probs = np.asarray(pred).reshape(-1)
             if probs.size < 3:
                 raise ValueError(f"Unexpected SASF output shape from {model_name}: {np.asarray(pred).shape}")
