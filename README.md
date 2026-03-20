@@ -1,3 +1,15 @@
+---
+title: Face Anti Spoofing
+emoji: 🛡️
+colorFrom: purple
+colorTo: pink
+sdk: gradio
+sdk_version: "6.9.0"
+python_version: "3.10"
+app_file: app.py
+pinned: false
+---
+
 # 🛡️ Face Anti-Spoofing Detector
 
 A production-ready **face liveness detection** system using a **4-model ensemble** with **micro-motion analysis**. Built with Gradio for the UI and deployed on HuggingFace Spaces.
