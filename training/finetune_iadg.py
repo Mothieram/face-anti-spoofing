@@ -179,8 +179,8 @@ def run_training(model_name, epochs_head, epochs_full):
     model = load_model(model_name).to(DEVICE)
     criterion = nn.CrossEntropyLoss()
 
-    best_acer = 1.0
-    best_state = None
+    best_acer = float("inf")
+    best_state = copy.deepcopy(model.state_dict())
 
     # ── PHASE 1: head only ────────────────────────────────────────────────────
     print(f"\n--- Phase 1: classifier head only ({epochs_head} epochs) ---")

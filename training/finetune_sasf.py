@@ -35,6 +35,9 @@ LR_HEAD     = 1e-4
 LR_FULL     = 5e-5
 EPOCHS_HEAD = 5
 EPOCHS_FULL = 10
+# SASF class logit index for "real" in the pretrained 3-way head.
+# Default models use: [spoof_low, real, spoof_high] -> real index = 1.
+REAL_LOGIT_INDEX = int(os.environ.get("SASF_REAL_LOGIT_INDEX", "1"))
 
 # SASF model names → input sizes (from parse_model_name)
 SASF_MODELS = {
@@ -108,8 +111,12 @@ def sasf_loss(logits, labels, class_to_idx):
     # Convert: real_idx → binary label 1 (real), else 0 (spoof)
     bin_labels = (labels == real_idx).float()    # 1 = real, 0 = spoof
 
-    probs       = torch.softmax(logits, dim=1)
-    real_prob   = probs[:, 1]                    # "real" class in 3-way head
+    probs = torch.softmax(logits, dim=1)
+    if logits.size(1) <= REAL_LOGIT_INDEX:
+        raise ValueError(
+            f"REAL_LOGIT_INDEX={REAL_LOGIT_INDEX} is out of range for logits with shape {tuple(logits.shape)}"
+        )
+    real_prob = probs[:, REAL_LOGIT_INDEX]
     # binary cross entropy: target 1 = real
     loss = F.binary_cross_entropy(real_prob.clamp(1e-6, 1-1e-6), bin_labels)
     return loss, real_prob, bin_labels
@@ -166,15 +173,17 @@ def finetune_one_model(model_name, img_size):
     model = load_sasf_model_and_predict(model_name)
     model = model.to(DEVICE)
 
-    best_acer  = 1.0
-    best_state = None
+    best_acer  = float("inf")
+    best_state = copy.deepcopy(model.state_dict())
 
     # ── phase 1: freeze everything except classifier ──────────────────────────
     print(f"\n--- Phase 1: head only ({EPOCHS_HEAD} epochs) ---")
     for name, p in model.named_parameters():
-        # MiniFASNet typically ends with 'classifier' or 'fc' layer
-        p.requires_grad = any(kw in name for kw in ["classifier", "fc", "last"])
+        # MiniFASNet heads are typically named prob/linear/bn.
+        p.requires_grad = any(kw in name for kw in ["prob", "linear", "bn", "classifier", "fc", "last"])
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    if n_params == 0:
+        raise RuntimeError("Phase-1 freeze selected 0 trainable parameters; check head layer name filters.")
     print(f"  trainable: {n_params:,}")
 
     optimizer = torch.optim.Adam(
