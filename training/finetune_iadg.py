@@ -11,6 +11,7 @@ import sys
 import argparse
 import copy
 import time
+import importlib.util
 
 import torch
 import torch.nn as nn
@@ -23,7 +24,21 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from IADG import Framework, _load_checkpoint
+try:
+    from IADG import Framework, _load_checkpoint
+except ModuleNotFoundError:
+    # Fallback for environments where package resolution differs (e.g., Kaggle notebook loaders).
+    iadg_path = os.path.join(REPO_ROOT, "IADG.py")
+    if not os.path.isfile(iadg_path):
+        raise
+    spec = importlib.util.spec_from_file_location("IADG", iadg_path)
+    if spec is None or spec.loader is None:
+        raise
+    iadg_mod = importlib.util.module_from_spec(spec)
+    sys.modules["IADG"] = iadg_mod
+    spec.loader.exec_module(iadg_mod)
+    Framework = iadg_mod.Framework
+    _load_checkpoint = iadg_mod._load_checkpoint
 
 DATA_DIR = os.path.join(REPO_ROOT, "data")
 WEIGHTS_DIR = os.path.join(REPO_ROOT, "weights")
