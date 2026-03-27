@@ -25,9 +25,14 @@ def get_width_height(patch_info):
 
 
 def parse_model_name(model_name):
-    info = model_name.split('_')[0:-1]
+    # Support both original names:
+    #   2.7_80x80_MiniFASNetV2.pth
+    # and fine-tuned names:
+    #   2.7_80x80_MiniFASNetV2_finetuned.pth
+    normalized = model_name.replace("_finetuned", "")
+    info = normalized.split('_')[0:-1]
     h_input, w_input = info[-1].split('x')
-    model_type = model_name.split('.pth')[0].split('_')[-1]
+    model_type = normalized.split('.pth')[0].split('_')[-1]
 
     if info[0] == "org":
         scale = None
