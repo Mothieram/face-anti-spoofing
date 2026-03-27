@@ -30,6 +30,7 @@ os.makedirs(CKPT_DIR, exist_ok=True)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 USE_TQDM = os.environ.get("FT_TQDM", "1") == "1"
 BATCH_SIZE = 32
+NUM_WORKERS = int(os.environ.get("FT_NUM_WORKERS", "2"))
 LR_HEAD = 1e-4
 LR_FULL = 5e-5
 EPOCHS_HEAD = 5
@@ -66,8 +67,21 @@ def build_loaders(img_size=80):
     weights = [1.0 / class_counts[t] for t in targets]
     sampler = WeightedRandomSampler(weights, len(weights), replacement=True)
 
-    train_dl = DataLoader(train_ds, batch_size=BATCH_SIZE, sampler=sampler, num_workers=2, pin_memory=True)
-    val_dl = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+    pin = DEVICE.type == "cuda"
+    train_dl = DataLoader(
+        train_ds,
+        batch_size=BATCH_SIZE,
+        sampler=sampler,
+        num_workers=NUM_WORKERS,
+        pin_memory=pin,
+    )
+    val_dl = DataLoader(
+        val_ds,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=NUM_WORKERS,
+        pin_memory=pin,
+    )
 
     print(f"  classes: {train_ds.class_to_idx}")
     print(f"  train: {len(train_ds)}  val: {len(val_ds)}")

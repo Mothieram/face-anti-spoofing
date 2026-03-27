@@ -32,6 +32,7 @@ os.makedirs(CKPT_DIR, exist_ok=True)
 
 IMAGE_SIZE = 256
 BATCH_SIZE = 16
+NUM_WORKERS = int(os.environ.get("FT_NUM_WORKERS", "2"))
 LR_HEAD = 1e-4
 LR_FULL = 1e-5
 EPOCHS_HEAD = 5
@@ -69,8 +70,21 @@ def build_loaders():
     weights = [1.0 / class_counts[t] for t in targets]
     sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
 
-    train_dl = DataLoader(train_ds, batch_size=BATCH_SIZE, sampler=sampler, num_workers=2, pin_memory=True)
-    val_dl = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+    pin = DEVICE.type == "cuda"
+    train_dl = DataLoader(
+        train_ds,
+        batch_size=BATCH_SIZE,
+        sampler=sampler,
+        num_workers=NUM_WORKERS,
+        pin_memory=pin,
+    )
+    val_dl = DataLoader(
+        val_ds,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=NUM_WORKERS,
+        pin_memory=pin,
+    )
 
     print(f"  train: {len(train_ds)} images  ({class_counts[0]} real, {class_counts[1]} spoof)")
     print(f"  val  : {len(val_ds)} images")
