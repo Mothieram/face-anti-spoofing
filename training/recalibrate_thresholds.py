@@ -22,8 +22,8 @@ from IADG import aFaceDetect, find_best_threshold, Framework, _load_checkpoint
 from IADG import crop_from_5landmarks
 from torchvision import transforms
 
-FINETUNED_DIR = os.path.join(os.path.dirname(__file__), "finetuned_weights")
-DATA_VAL      = os.path.join(os.path.dirname(__file__), "data", "val")
+FINETUNED_DIR = os.path.join(REPO_ROOT, "finetuned_weights")
+DATA_VAL      = os.path.join(REPO_ROOT, "data", "val")
 WEIGHTS_DIR   = os.path.join(REPO_ROOT, "weights")
 DEVICE        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

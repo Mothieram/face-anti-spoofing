@@ -145,8 +145,20 @@ def _ckpt_path(model_name):
     return os.path.join(CKPT_DIR, f"{safe_name}_resume.pth")
 
 
+def _current_resume_meta(model_name, img_size):
+    return {
+        "model_name": model_name,
+        "data_dir": os.path.abspath(DATA_DIR),
+        "weights_dir": os.path.abspath(WEIGHTS_DIR),
+        "epochs_head": int(EPOCHS_HEAD),
+        "epochs_full": int(EPOCHS_FULL),
+        "img_size": int(img_size),
+        "batch_size": int(BATCH_SIZE),
+    }
+
+
 def _save_resume_checkpoint(model_name, phase, epoch, model, optimizer, scheduler,
-                            best_acer, best_state, epochs_head, epochs_full):
+                            best_acer, best_state, epochs_head, epochs_full, img_size):
     torch.save(
         {
             "phase": phase,
@@ -158,6 +170,7 @@ def _save_resume_checkpoint(model_name, phase, epoch, model, optimizer, schedule
             "best_state": best_state,
             "epochs_head": int(epochs_head),
             "epochs_full": int(epochs_full),
+            "resume_meta": _current_resume_meta(model_name, img_size),
         },
         _ckpt_path(model_name),
     )
@@ -191,22 +204,40 @@ def finetune_one_model(model_name, img_size, resume=True):
         ckpt_file = _ckpt_path(model_name)
         if os.path.isfile(ckpt_file):
             ckpt = torch.load(ckpt_file, map_location=DEVICE)
-            resume_phase = ckpt.get("phase", "head")
-            resume_epoch = int(ckpt.get("epoch", 0))
-            model.load_state_dict(ckpt["model_state"])
-            best_acer = float(ckpt.get("best_acer", best_acer))
-            best_state = ckpt.get("best_state", best_state)
-            resume_opt_state = ckpt.get("optimizer_state")
-            resume_sch_state = ckpt.get("scheduler_state")
-            print(f"  [resume] loaded: {ckpt_file}")
-            print(f"  [resume] phase={resume_phase} epoch={resume_epoch}")
-            if resume_phase == "done":
-                save_name = model_name.replace(".pth", "_finetuned.pth")
-                save_path = os.path.join(SAVE_DIR, save_name)
-                torch.save(best_state, save_path)
-                print(f"  [resume] already finished. Best ACER: {best_acer:.4f}")
-                print(f"  [resume] Saved best weights -> {save_path}")
-                return save_path
+            current_meta = _current_resume_meta(model_name, img_size)
+            saved_meta = ckpt.get("resume_meta")
+
+            can_resume = True
+            if saved_meta is not None:
+                if saved_meta != current_meta:
+                    can_resume = False
+                    print("  [resume] checkpoint config mismatch; starting fresh for this model.")
+            else:
+                legacy_h = int(ckpt.get("epochs_head", -1))
+                legacy_f = int(ckpt.get("epochs_full", -1))
+                if legacy_h != EPOCHS_HEAD or legacy_f != EPOCHS_FULL:
+                    can_resume = False
+                    print("  [resume] legacy checkpoint epoch plan mismatch; starting fresh for this model.")
+                else:
+                    print("  [resume] legacy checkpoint detected (no config metadata).")
+
+            if can_resume:
+                resume_phase = ckpt.get("phase", "head")
+                resume_epoch = int(ckpt.get("epoch", 0))
+                model.load_state_dict(ckpt["model_state"])
+                best_acer = float(ckpt.get("best_acer", best_acer))
+                best_state = ckpt.get("best_state", best_state)
+                resume_opt_state = ckpt.get("optimizer_state")
+                resume_sch_state = ckpt.get("scheduler_state")
+                print(f"  [resume] loaded: {ckpt_file}")
+                print(f"  [resume] phase={resume_phase} epoch={resume_epoch}")
+                if resume_phase == "done":
+                    save_name = model_name.replace(".pth", "_finetuned.pth")
+                    save_path = os.path.join(SAVE_DIR, save_name)
+                    torch.save(best_state, save_path)
+                    print(f"  [resume] already finished. Best ACER: {best_acer:.4f}")
+                    print(f"  [resume] Saved best weights -> {save_path}")
+                    return save_path
 
     print(f"\n--- Phase 1: head only ({EPOCHS_HEAD} epochs) ---")
     _set_phase1_trainable(model)
@@ -242,7 +273,7 @@ def finetune_one_model(model_name, img_size, resume=True):
             best_state = copy.deepcopy(model.state_dict())
         _save_resume_checkpoint(
             model_name, "head", epoch, model, optimizer, scheduler,
-            best_acer, best_state, EPOCHS_HEAD, EPOCHS_FULL
+            best_acer, best_state, EPOCHS_HEAD, EPOCHS_FULL, img_size
         )
 
     print(f"\n--- Phase 2: full model ({EPOCHS_FULL} epochs) ---")
@@ -283,7 +314,7 @@ def finetune_one_model(model_name, img_size, resume=True):
             best_state = copy.deepcopy(model.state_dict())
         _save_resume_checkpoint(
             model_name, "full", epoch, model, optimizer, scheduler,
-            best_acer, best_state, EPOCHS_HEAD, EPOCHS_FULL
+            best_acer, best_state, EPOCHS_HEAD, EPOCHS_FULL, img_size
         )
 
     save_name = model_name.replace(".pth", "_finetuned.pth")
@@ -291,7 +322,7 @@ def finetune_one_model(model_name, img_size, resume=True):
     torch.save(best_state, save_path)
     _save_resume_checkpoint(
         model_name, "done", EPOCHS_FULL, model, None, None,
-        best_acer, best_state, EPOCHS_HEAD, EPOCHS_FULL
+        best_acer, best_state, EPOCHS_HEAD, EPOCHS_FULL, img_size
     )
     print(f"\n  [ok] Best ACER: {best_acer:.4f}")
     print(f"  [ok] Saved -> {save_path}")
