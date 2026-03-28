@@ -1,4 +1,6 @@
 torch
+torchvision
+torchaudio
 opencv-python-headless==4.10.0.84
 onnxruntime-gpu==1.19.2
 omegaconf
