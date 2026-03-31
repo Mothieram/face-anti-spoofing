@@ -506,8 +506,10 @@ Press **🔄 Reset** to clear temporal history.
         server_name="0.0.0.0",
         server_port=int(os.getenv("PORT", "7860")),
         show_api=False,
-        share = True
     )
+    launch_kwargs["share"] = True
+    app.launch(**launch_kwargs)
+
 
 if __name__ == '__main__':
     demo()
