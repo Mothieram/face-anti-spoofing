@@ -12,6 +12,30 @@ import sys
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# ── Patch gradio_client bug: additionalProperties=False crashes schema gen ──
+try:
+    import gradio_client.utils as _gcu
+
+    _orig_get_type = _gcu.get_type
+    def _safe_get_type(schema):
+        if not isinstance(schema, dict):
+            return "any"
+        return _orig_get_type(schema)
+    _gcu.get_type = _safe_get_type
+
+    _orig_j2p = _gcu._json_schema_to_python_type
+    def _safe_j2p(schema, defs=None):
+        if not isinstance(schema, dict):
+            return "any"
+        if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], dict):
+            schema = {k: v for k, v in schema.items() if k != "additionalProperties"}
+        return _orig_j2p(schema, defs)
+    _gcu._json_schema_to_python_type = _safe_j2p
+except Exception:
+    pass
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 import cv2
 import numpy as np
 import gradio as gr
@@ -500,15 +524,14 @@ Press **🔄 Reset** to clear temporal history.
 - **Micro-motion** — Nose-tip displacement variance + FFT periodicity (anti-replay)
 """)
 
-    # HuggingFace Spaces sets SPACE_ID; local/container runs do not.
+    # HuggingFace Spaces handles routing itself; share=True not needed there.
     is_space = bool(os.getenv("SPACE_ID"))
-    launch_kwargs = dict(
+    app.launch(
         server_name="0.0.0.0",
         server_port=int(os.getenv("PORT", "7860")),
         show_api=False,
+        share=not is_space,
     )
-    launch_kwargs["share"] = True
-    app.launch(**launch_kwargs)
 
 
 if __name__ == '__main__':
