@@ -1,6 +1,6 @@
 ---
 title: Face Anti-Spoofing - Model Fine-Tuning
-emoji: shield
+emoji: 🛡️
 colorFrom: blue
 colorTo: indigo
 sdk: gradio
