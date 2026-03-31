@@ -2,7 +2,7 @@
 app.py  —  Face Anti-Spoofing Detector  (Gradio)
 ─────────────────────────────────────────────────
 Two tabs:
-  1. Image tab   — upload or single webcam snapshot → 4-model ensemble verdict
+  1. Image tab   — upload or single webcam snapshot → 5-model ensemble verdict
   2. Live tab    — streaming webcam → micro-motion check + spoof ensemble fused
 """
 
@@ -15,6 +15,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import cv2
 import numpy as np
 import gradio as gr
+import torch
+from torchvision import transforms
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
@@ -24,6 +26,7 @@ if MODULE_DIR not in sys.path:
 
 import IADG
 import SASF
+from infer_cdcnpp import load as load_cdcnpp_model
 from liveness_temporal import TemporalLivenessChecker, fuse_with_spoof_score
 
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +62,44 @@ def _load_finetuned_iadg_if_exists(spoof_model, filename, label):
                      label, traceback.format_exc())
 
 
+def _pick_existing_file(candidates):
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+class CDCNPPWrapper:
+    """Adapter so CDCN++ behaves like the other model wrappers."""
+
+    def __init__(self, weights_path, threshold=0.53, device=None):
+        self.threshold = float(threshold)
+        self.model = load_cdcnpp_model(weights_path, device=device)
+        self.tfm = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+        ])
+
+    def __call__(self, image, bbox, landmark):
+        h, w = image.shape[:2]
+        x1, y1, x2, y2 = [int(v) for v in bbox[:4]]
+        x1, x2 = max(0, min(x1, w - 1)), max(1, min(x2, w))
+        y1, y2 = max(0, min(y1, h - 1)), max(1, min(y2, h))
+        if x2 <= x1 or y2 <= y1:
+            face = image
+        else:
+            face = image[y1:y2, x1:x2]
+
+        t = self.tfm(face).unsqueeze(0).to(next(self.model.parameters()).device)
+        with torch.no_grad():
+            out = self.model(t)
+            spoof_prob = float(out["spoof_prob"].flatten()[0].detach().cpu())
+        spoof_label = int(spoof_prob >= self.threshold)
+        return spoof_label, spoof_prob, face
+
+
 # ── Model loading ─────────────────────────────────────────────────────────────
 MODEL_LOAD_ERROR = None
 try:
@@ -67,6 +108,15 @@ try:
     Model2 = IADG.aSpoofONNX('modelrgb', threshold=0.0553)
     Model3 = IADG.aSpoof('ICM2O',  threshold=0.9980)
     Model4 = IADG.aSpoof('IOM2C',  threshold=0.9944)
+    cdcn_weights = _pick_existing_file([
+        os.path.join(FINETUNED_DIR, "cdcnpp.pth"),
+        os.path.join(BASE_DIR, "weights", "cdcnpp.pth"),
+    ])
+    Model5 = CDCNPPWrapper(cdcn_weights, threshold=0.53) if cdcn_weights else None
+    if Model5 is not None:
+        logger.info("CDCN++: loaded weights from %s", cdcn_weights)
+    else:
+        logger.info("CDCN++: not loaded (cdcnpp.pth not found in finetuned_weights/ or weights/)")
     _load_finetuned_iadg_if_exists(Model3, "ICM2O_finetuned.pth", "ICM2O")
     _load_finetuned_iadg_if_exists(Model4, "IOM2C_finetuned.pth", "IOM2C")
     # SASF fine-tuned swap is not wired here yet; SASF uses original model loading path.
@@ -74,11 +124,11 @@ try:
 except Exception as e:
     MODEL_LOAD_ERROR = f"{type(e).__name__}: {e}"
     logger.error("Error loading models:\n%s", traceback.format_exc())
-    ModelD = Model1 = Model2 = Model3 = Model4 = None
+    ModelD = Model1 = Model2 = Model3 = Model4 = Model5 = None
     MODELS_OK = False
 
 # ── Ensemble weights ──────────────────────────────────────────────────────────
-ENSEMBLE_WEIGHTS = {'sasf': 0.25, 'flrgb': 0.25, 'icm2o': 0.25, 'iom2c': 0.25}
+ENSEMBLE_WEIGHTS = {'sasf': 0.20, 'flrgb': 0.20, 'icm2o': 0.20, 'iom2c': 0.20, 'cdcn': 0.20}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -115,8 +165,8 @@ def _draw_on_image(image_rgb, bbox, label, color):
 
 
 def _run_ensemble(image_rgb, bbox, landmark,
-                  thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c,
-                  w_sasf=0.15, w_flrgb=0.15, w_icm2o=0.35, w_iom2c=0.35):
+                  thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c, thr_cdcn,
+                  w_sasf=0.15, w_flrgb=0.15, w_icm2o=0.25, w_iom2c=0.25, w_cdcn=0.20):
     """
     Run 4 models in parallel with dynamic weights (raw, auto-normalised inside).
     Returns (ensemble_real_score, result_lines, is_spoof)
@@ -125,6 +175,8 @@ def _run_ensemble(image_rgb, bbox, landmark,
     Model2.threshold = thr_flrgb
     Model3.threshold = thr_icm2o
     Model4.threshold = thr_iom2c
+    if Model5 is not None:
+        Model5.threshold = thr_cdcn
 
     tasks = {
         'sasf':  (Model1, image_rgb, bbox, landmark),
@@ -132,14 +184,16 @@ def _run_ensemble(image_rgb, bbox, landmark,
         'icm2o': (Model3, image_rgb, bbox, landmark),
         'iom2c': (Model4, image_rgb, bbox, landmark),
     }
-    model_thresholds  = {'sasf': thr_sasf, 'flrgb': thr_flrgb, 'icm2o': thr_icm2o, 'iom2c': thr_iom2c}
-    model_raw_weights = {'sasf': w_sasf,   'flrgb': w_flrgb,   'icm2o': w_icm2o,   'iom2c': w_iom2c}
-    model_labels      = {'sasf': 'SASF', 'flrgb': 'FLRGB', 'icm2o': 'ICM2O', 'iom2c': 'IOM2C'}
+    if Model5 is not None:
+        tasks['cdcn'] = (Model5, image_rgb, bbox, landmark)
+    model_thresholds  = {'sasf': thr_sasf, 'flrgb': thr_flrgb, 'icm2o': thr_icm2o, 'iom2c': thr_iom2c, 'cdcn': thr_cdcn}
+    model_raw_weights = {'sasf': w_sasf,   'flrgb': w_flrgb,   'icm2o': w_icm2o,   'iom2c': w_iom2c,   'cdcn': w_cdcn}
+    model_labels      = {'sasf': 'SASF', 'flrgb': 'FLRGB', 'icm2o': 'ICM2O', 'iom2c': 'IOM2C', 'cdcn': 'CDCN++'}
     names = ['Real', 'Spoof']
     total_raw = sum(model_raw_weights.values()) or 1.0
 
     results = {}
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=max(1, len(tasks))) as executor:
         futures = {executor.submit(_run_single_model, *args): key
                    for key, args in tasks.items()}
         for future in as_completed(futures):
@@ -152,7 +206,7 @@ def _run_ensemble(image_rgb, bbox, landmark,
 
     active_weights = {}
     lines = []
-    for key in ('sasf', 'flrgb', 'icm2o', 'iom2c'):
+    for key in ('sasf', 'flrgb', 'icm2o', 'iom2c', 'cdcn'):
         res  = results.get(key)
         thr  = model_thresholds[key]
         lbl  = model_labels[key]
@@ -197,8 +251,8 @@ def _run_ensemble(image_rgb, bbox, landmark,
 # Tab 1 — Single image
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_image(input_image, thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c,
-              w_sasf, w_flrgb, w_icm2o, w_iom2c):
+def run_image(input_image, thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c, thr_cdcn,
+              w_sasf, w_flrgb, w_icm2o, w_iom2c, w_cdcn):
     if input_image is None or not hasattr(input_image, "shape"):
         return None, "Please upload or capture an image first."
     if not MODELS_OK:
@@ -211,8 +265,8 @@ def run_image(input_image, thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c,
     bbox, landmark        = bboxes[0], landmarks[0]
     ensemble_score, lines, is_spoof = _run_ensemble(
         input_image, bbox, landmark,
-        thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c,
-        w_sasf, w_flrgb, w_icm2o, w_iom2c
+        thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c, thr_cdcn,
+        w_sasf, w_flrgb, w_icm2o, w_iom2c, w_cdcn
     )
     if ensemble_score is None:
         return input_image, "\n".join(lines)
@@ -232,8 +286,8 @@ def process_live_frame(
     checker: TemporalLivenessChecker,
     frozen_frame,           # last annotated result frame (or None)
     verdict_done: bool,     # True = verdict already shown, stop processing
-    thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c,
-    w_sasf, w_flrgb, w_icm2o, w_iom2c,
+    thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c, thr_cdcn,
+    w_sasf, w_flrgb, w_icm2o, w_iom2c, w_cdcn,
     temporal_weight,
 ):
     """Called on every streaming webcam frame via gr.Image.stream()."""
@@ -270,8 +324,8 @@ def process_live_frame(
     # ── Enough frames — run spoof ensemble ───────────────────────────────────
     ensemble_real_score, lines, is_spoof = _run_ensemble(
         frame, bbox, landmark,
-        thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c,
-        w_sasf, w_flrgb, w_icm2o, w_iom2c
+        thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c, thr_cdcn,
+        w_sasf, w_flrgb, w_icm2o, w_iom2c, w_cdcn
     )
     if ensemble_real_score is None:
         return frame, "\n".join(lines), False, None
@@ -311,7 +365,7 @@ def demo():
 
         gr.Markdown("""
 # 🛡️ Face Anti-Spoofing Detector
-**4-model ensemble** (SASF · FLRGB · ICM2O · IOM2C) + **micro-motion liveness**
+**5-model ensemble** (SASF · FLRGB · ICM2O · IOM2C · CDCN++) + **micro-motion liveness**
 """)
 
         # ── Shared thresholds ─────────────────────────────────────────────────
@@ -321,31 +375,33 @@ def demo():
                 thr_flrgb = gr.Slider(0.0, 1.0, value=0.45, step=0.0001, label="FLRGB threshold")
                 thr_icm2o = gr.Slider(0.0, 1.0, value=0.55, step=0.0001, label="ICM2O threshold")
                 thr_iom2c = gr.Slider(0.0, 1.0, value=0.55, step=0.0001, label="IOM2C threshold")
+                thr_cdcn  = gr.Slider(0.0, 1.0, value=0.53, step=0.0001, label="CDCN++ threshold")
 
-        thresholds = [thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c]
+        thresholds = [thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c, thr_cdcn]
 
         # ── Shared model weights ───────────────────────────────────────────────
         with gr.Accordion("⚖️ Model Weights  (auto-normalised to sum = 1.0)", open=True):
             gr.Markdown("Adjust how much each model contributes to the final ensemble verdict.")
             with gr.Row():
-                w_sasf  = gr.Slider(0.0, 1.0, value=0.25, step=0.01, label="SASF weight")
-                w_flrgb = gr.Slider(0.0, 1.0, value=0.25, step=0.01, label="FLRGB weight")
-                w_icm2o = gr.Slider(0.0, 1.0, value=0.25, step=0.01, label="ICM2O weight")
-                w_iom2c = gr.Slider(0.0, 1.0, value=0.25, step=0.01, label="IOM2C weight")
+                w_sasf  = gr.Slider(0.0, 1.0, value=0.20, step=0.01, label="SASF weight")
+                w_flrgb = gr.Slider(0.0, 1.0, value=0.20, step=0.01, label="FLRGB weight")
+                w_icm2o = gr.Slider(0.0, 1.0, value=0.20, step=0.01, label="ICM2O weight")
+                w_iom2c = gr.Slider(0.0, 1.0, value=0.20, step=0.01, label="IOM2C weight")
+                w_cdcn  = gr.Slider(0.0, 1.0, value=0.20, step=0.01, label="CDCN++ weight")
             weight_display = gr.Markdown(
-                "_SASF 25% · FLRGB 25% · ICM2O 25% · IOM2C 25%  —  sum = 1.00_"
+                "_SASF 20% · FLRGB 20% · ICM2O 20% · IOM2C 20% · CDCN++ 20%  —  sum = 1.00_"
             )
 
-        weights = [w_sasf, w_flrgb, w_icm2o, w_iom2c]
+        weights = [w_sasf, w_flrgb, w_icm2o, w_iom2c, w_cdcn]
 
-        def _update_weight_display(ws, wf, wi1, wi2):
-            total = ws + wf + wi1 + wi2
+        def _update_weight_display(ws, wf, wi1, wi2, wc):
+            total = ws + wf + wi1 + wi2 + wc
             if total == 0:
                 return "_All weights are zero — please set at least one above 0._"
-            ns, nf, ni1, ni2 = ws/total, wf/total, wi1/total, wi2/total
+            ns, nf, ni1, ni2, nc = ws/total, wf/total, wi1/total, wi2/total, wc/total
             return (
                 f"_SASF **{ns:.0%}** · FLRGB **{nf:.0%}** · "
-                f"ICM2O **{ni1:.0%}** · IOM2C **{ni2:.0%}**  —  sum = 1.00_"
+                f"ICM2O **{ni1:.0%}** · IOM2C **{ni2:.0%}** · CDCN++ **{nc:.0%}**  —  sum = 1.00_"
             )
 
         for w in weights:
@@ -390,7 +446,7 @@ def demo():
             with gr.TabItem("🎥 Live"):
                 gr.Markdown("""
 Streams webcam frames, accumulates ~15 frames of micro-motion,
-then fuses motion score with the 4-model ensemble for a combined verdict.
+then fuses motion score with the 5-model ensemble for a combined verdict.
 **Continuous mode:** result updates in real time on every frame.
 Press **🔄 Reset** to clear temporal history.
 """)
@@ -440,6 +496,7 @@ Press **🔄 Reset** to clear temporal history.
 - **SASF** — Silent-Face-Anti-Spoofing · [github](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing)
 - **FLRGB** — Face Liveness Detection RGB · [ModelScope](https://modelscope.cn/models/iic/cv_manual_face-liveness_flrgb)
 - **ICM2O / IOM2C** — Instance-Aware Domain Generalisation CVPR 2023 · [paper](https://openaccess.thecvf.com/content/CVPR2023/papers/Zhou_Instance-Aware_Domain_Generalization_for_Face_Anti-Spoofing_CVPR_2023_paper.pdf)
+- **CDCN++** — Central Difference Convolutional Network ++ (depth-supervised RGB anti-spoofing)
 - **Micro-motion** — Nose-tip displacement variance + FFT periodicity (anti-replay)
 """)
 
