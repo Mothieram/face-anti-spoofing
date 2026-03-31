@@ -283,9 +283,9 @@ def run_image(input_image, thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c, thr_cdcn,
 
 def process_live_frame(
     frame,
-    checker: TemporalLivenessChecker,
+    checker,
     frozen_frame,           # last annotated result frame (or None)
-    verdict_done: bool,     # True = verdict already shown, stop processing
+    verdict_done,           # True = verdict already shown, stop processing
     thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c, thr_cdcn,
     w_sasf, w_flrgb, w_icm2o, w_iom2c, w_cdcn,
     temporal_weight,
@@ -351,7 +351,7 @@ def process_live_frame(
     return annotated, status, False, None
 
 
-def reset_checker(checker: TemporalLivenessChecker):
+def reset_checker(checker):
     checker.reset()
     return checker, False, None, "🔄 Session reset — collecting new frames…"
 
@@ -500,12 +500,12 @@ Press **🔄 Reset** to clear temporal history.
 - **Micro-motion** — Nose-tip displacement variance + FFT periodicity (anti-replay)
 """)
 
-    # Spaces/containers can fail localhost probing; explicit host+port and share
-    # make startup deterministic across local and Hugging Face runtimes.
+    # Spaces should not use share links; local/container runs can still enable them.
+    is_space = bool(os.getenv("SPACE_ID"))
     app.launch(
         server_name="0.0.0.0",
         server_port=int(os.getenv("PORT", "7860")),
-        share=True,
+        share=not is_space,
         show_api=False,
     )
 
