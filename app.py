@@ -452,7 +452,7 @@ Press **🔄 Reset** to clear temporal history.
 """)
                 checker_state      = gr.State(TemporalLivenessChecker())
                 verdict_done_state = gr.State(False)
-                frozen_frame_state = gr.State(None)
+                frozen_frame_state = gr.State(value=None)  # type: ignore
 
                 with gr.Row():
                     with gr.Column():
@@ -500,14 +500,17 @@ Press **🔄 Reset** to clear temporal history.
 - **Micro-motion** — Nose-tip displacement variance + FFT periodicity (anti-replay)
 """)
 
-    # Spaces should not use share links; local/container runs can still enable them.
+    # HuggingFace Spaces sets SPACE_ID; local/container runs do not.
     is_space = bool(os.getenv("SPACE_ID"))
-    app.launch(
+    launch_kwargs = dict(
         server_name="0.0.0.0",
         server_port=int(os.getenv("PORT", "7860")),
-        share=not is_space,
         show_api=False,
     )
+    if not is_space:
+        # Local: create a public tunnel so localhost is reachable
+        launch_kwargs["share"] = True
+    app.launch(**launch_kwargs)
 
 
 if __name__ == '__main__':
