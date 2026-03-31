@@ -39,9 +39,22 @@ def _preprocess_image(image_path: str, image_size: int = 256) -> torch.Tensor:
 
 
 def load(path: str, device: Optional[str] = None) -> CDCNpp:
-    """Load CDCN++ weights from .pth."""
+    """Load CDCN++ weights from .pth, handling DataParallel checkpoints."""
     d = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return load_cdcnpp(path, device=d)
+
+    model = CDCNpp().to(d)
+
+    ckpt = torch.load(path, map_location=d)
+    state_dict = ckpt.get("state_dict", ckpt)
+
+    # Remove DataParallel prefix when present.
+    first_key = next(iter(state_dict), "")
+    if first_key.startswith("module."):
+        state_dict = {k.replace("module.", "", 1): v for k, v in state_dict.items()}
+
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
 
 
 @torch.no_grad()
