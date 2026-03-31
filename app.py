@@ -500,7 +500,14 @@ Press **🔄 Reset** to clear temporal history.
 - **Micro-motion** — Nose-tip displacement variance + FFT periodicity (anti-replay)
 """)
 
-    app.launch()
+    # Spaces/containers can fail localhost probing; explicit host+port and share
+    # make startup deterministic across local and Hugging Face runtimes.
+    app.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.getenv("PORT", "7860")),
+        share=True,
+        show_api=False,
+    )
 
 
 if __name__ == '__main__':

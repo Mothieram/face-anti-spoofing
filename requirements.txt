@@ -6,6 +6,7 @@ onnxruntime-gpu==1.19.2
 omegaconf
 easydict
 gradio==4.44.1
+gradio_client==1.3.0
 huggingface_hub==0.25.2
 tqdm
 kaggle
