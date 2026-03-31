@@ -14,7 +14,7 @@ pinned: false
 
 # 🛡️ Face Anti-Spoofing — Model Fine-Tuning Branch
 
-**Production-grade passive liveness detection with a 4-model weighted ensemble, fine-tuned on domain-specific datasets.**
+**Production-grade passive liveness detection with a 5-model weighted ensemble, fine-tuned on domain-specific datasets.**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch)](https://pytorch.org/)
@@ -60,7 +60,7 @@ pinned: false
 
 This branch (`model-finetuning`) contains the **complete fine-tuning pipeline** for the passive face anti-spoofing ensemble. The goal is to adapt pre-trained liveness detection models to domain-specific datasets, improving generalization across real-world spoof attack types — including printed photos, screen replays, silicone masks, and cut-out masks.
 
-The system uses a **4-model weighted ensemble** running in parallel via `ThreadPoolExecutor`, combining complementary model architectures and training paradigms to achieve robust, low-latency passive liveness detection without requiring active user cooperation.
+The system uses a **5-model weighted ensemble** running in parallel via `ThreadPoolExecutor`, combining complementary model architectures and training paradigms to achieve robust, low-latency passive liveness detection without requiring active user cooperation.
 
 Key highlights of this branch:
 
@@ -121,14 +121,21 @@ Input Frame (BGR / RGB)
 | 2   | **IOM2C**             | PyTorch `.pth` | Depth-aware CNN variant             | 224×224       | Cross-modal spoofing cues |
 | 3   | **modelrgb**          | ONNX `.onnx`   | Lightweight CNN (ONNX-optimized)    | 128×128       | Fast RGB liveness scoring |
 | 4   | **SASF / MiniFASNet** | PyTorch `.pth` | MiniFASNet (Silent Anti-Spoof)      | 80×80 / 80×80 | Multi-scale patch fusion  |
+| 5   | **CDCN++**            | PyTorch `.pth` | Central Difference CNN++            | 256x256       | Depth-supervised anti-spoofing |
 
-All four models run in **parallel threads** and their softmax confidence scores are fused using configurable weights:
+All five models run in **parallel threads** and their softmax confidence scores are fused using configurable weights:
 
 ```python
-final_score = w1 * score_icm2o + w2 * score_iom2c + w3 * score_modelrgb + w4 * score_sasf
+final_score = (
+    w1 * score_icm2o +
+    w2 * score_iom2c +
+    w3 * score_modelrgb +
+    w4 * score_sasf +
+    w5 * score_cdcnpp
+)
 ```
 
-Default weights: `[0.25, 0.25, 0.25, 0.25]` — adjustable via Gradio sliders at inference time.
+Default weights: `[0.20, 0.20, 0.20, 0.20, 0.20]` — adjustable via Gradio sliders at inference time.
 
 ---
 
@@ -396,7 +403,7 @@ python finetune/train.py \
 ```python
 from ensemble.parallel_runner import EnsembleRunner
 
-runner = EnsembleRunner(weights=[0.25, 0.25, 0.25, 0.25])
+runner = EnsembleRunner(weights=[0.20, 0.20, 0.20, 0.20, 0.20])
 result = runner.predict("path/to/face_image.jpg")
 
 print(result)
@@ -428,9 +435,9 @@ The Gradio interface exposes the following controls:
 | Feature                  | Description                                                               |
 | ------------------------ | ------------------------------------------------------------------------- |
 | **Image / Webcam Input** | Upload a face image or use live webcam feed                               |
-| **Model Weight Sliders** | Individually tune each model's contribution to the ensemble score (w₁–w₄) |
+| **Model Weight Sliders** | Individually tune each model's contribution to the ensemble score (w₁–w₅) |
 | **Liveness Score Bar**   | Visual confidence gauge — Live vs. Spoof                                  |
-| **Per-Model Breakdown**  | Shows individual score from each of the 4 models                          |
+| **Per-Model Breakdown**  | Shows individual score from each of the 5 models (including CDCN++)                          |
 | **Micro-Motion Toggle**  | Enable/disable micro-motion liveness auxiliary check                      |
 | **Threshold Slider**     | Adjust the Live/Spoof decision boundary (default: 0.5)                    |
 
@@ -470,7 +477,7 @@ Evaluation metrics used:
 - [x] Checkpoint-based training with epoch resumption
 - [x] Mixed precision (FP16/AMP) training support
 - [x] Per-model YAML config files
-- [ ] Complete fine-tuning of all 4 ensemble models on Kaggle
+- [ ] Complete fine-tuning of all 5 ensemble models on Kaggle
 - [ ] ONNX export of fine-tuned weights
 - [ ] Quantization-aware training (QAT) for edge deployment
 - [ ] Evaluation on CelebA-Spoof and SiW benchmarks
@@ -594,3 +601,5 @@ Made with ❤️ by [Mothieram](https://github.com/Mothieram) ·
 [⬆ Back to Top](#️-face-anti-spoofing--model-fine-tuning-branch)
 
 </div>
+
+
