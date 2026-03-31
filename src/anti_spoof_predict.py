@@ -52,7 +52,7 @@ class AntiSpoofPredict():
             self.model.load_state_dict(new_state_dict)
         else:
             self.model.load_state_dict(state_dict)
-        return None
+        return self.model
 
     def predict(self, img, model_path):
         test_transform = trans.Compose([
