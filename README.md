@@ -1,259 +1,604 @@
 ---
-title: Face Anti Spoofing
+title: Face Anti-Spoofing — Model Fine-Tuning
 emoji: 🛡️
-colorFrom: purple
-colorTo: pink
+colorFrom: blue
+colorTo: indigo
 sdk: gradio
-sdk_version: "6.9.0"
-python_version: "3.10"
+sdk_version: "4.x"
 app_file: app.py
 pinned: false
+license: mit
+tags:
+  - face-anti-spoofing
+  - liveness-detection
+  - computer-vision
+  - deep-learning
+  - onnx
+  - pytorch
+  - fine-tuning
 ---
 
-# 🛡️ Face Anti-Spoofing Detector
+<div align="center">
 
-A production-ready **face liveness detection** system using a **4-model ensemble** with **micro-motion analysis**. Built with Gradio for the UI and deployed on HuggingFace Spaces.
+# 🛡️ Face Anti-Spoofing — Model Fine-Tuning Branch
 
-[![HuggingFace Space](https://img.shields.io/badge/🤗%20HuggingFace-Space-yellow)](https://huggingface.co/spaces/mothieram/face-anti-spoofing)
-[![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
-[![Gradio](https://img.shields.io/badge/Gradio-6.9.0-orange)](https://gradio.app/)
+**Production-grade passive liveness detection with a 4-model weighted ensemble, fine-tuned on domain-specific datasets.**
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch)](https://pytorch.org/)
+[![ONNX](https://img.shields.io/badge/ONNX-Runtime-005CED?logo=onnx)](https://onnxruntime.ai/)
+[![Gradio](https://img.shields.io/badge/Gradio-UI-FF6B35?logo=gradio)](https://gradio.app/)
+[![Kaggle](https://img.shields.io/badge/Kaggle-Dataset-20BEFF?logo=kaggle)](https://kaggle.com/)
+[![HuggingFace](https://img.shields.io/badge/🤗-HuggingFace%20Space-FFD21E)](https://huggingface.co/spaces/mothieram/face-anti-spoofing)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+> **Branch:** `model-finetuning` &nbsp;|&nbsp; **Base Repo:** [`Mothieram/face-anti-spoofing`](https://github.com/Mothieram/face-anti-spoofing) &nbsp;|&nbsp; **HF Space:** [`mothieram/face-anti-spoofing`](https://huggingface.co/spaces/mothieram/face-anti-spoofing)
+
+</div>
 
 ---
 
-## 🧠 How It Works
+## 📋 Table of Contents
 
-The system runs **4 spoof detection models in parallel** via `ThreadPoolExecutor`, fuses their scores using configurable weighted averaging, and optionally combines with a **micro-motion liveness check** from the webcam stream.
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Ensemble Models](#ensemble-models)
+- [Fine-Tuning Pipeline](#fine-tuning-pipeline)
+  - [Datasets](#datasets)
+  - [Dataset Preparation](#dataset-preparation)
+  - [Training Configuration](#training-configuration)
+  - [Checkpoint Resumption](#checkpoint-resumption)
+- [Repository Structure](#repository-structure)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Running Fine-Tuning](#running-fine-tuning)
+  - [Inference](#inference)
+  - [Gradio Demo](#gradio-demo)
+- [Gradio UI Features](#gradio-ui-features)
+- [Results & Metrics](#results--metrics)
+- [Differences from Main Branch](#differences-from-main-branch)
+- [Roadmap](#roadmap)
+- [Citations](#citations)
+- [License](#license)
+- [Acknowledgements](#acknowledgements)
+
+---
+
+## Overview
+
+This branch (`model-finetuning`) contains the **complete fine-tuning pipeline** for the passive face anti-spoofing ensemble. The goal is to adapt pre-trained liveness detection models to domain-specific datasets, improving generalization across real-world spoof attack types — including printed photos, screen replays, silicone masks, and cut-out masks.
+
+The system uses a **4-model weighted ensemble** running in parallel via `ThreadPoolExecutor`, combining complementary model architectures and training paradigms to achieve robust, low-latency passive liveness detection without requiring active user cooperation.
+
+Key highlights of this branch:
+
+- Full dataset preparation pipeline for `anti-spoofing-live` and `LCC_FASD` Kaggle datasets
+- Checkpoint-based training with automatic epoch resumption
+- Per-model configurable fine-tuning with frozen/unfrozen backbone strategies
+- Weighted ensemble scoring with tunable model weights exposed via Gradio sliders
+- Micro-motion liveness detection as an auxiliary passive signal
+- ONNX and PyTorch dual-format inference support
+
+---
+
+## Architecture
 
 ```
-Input Image / Webcam Frame
+Input Frame (BGR / RGB)
         │
         ▼
-  RetinaFace Detector
-        │
-   ┌────┴────┐
-   │  bbox   │  landmarks
-   └────┬────┘
-        │
-  ┌─────┴──────────────────────────────┐
-  │        Parallel Inference          │
-  │  SASF  │  FLRGB  │ ICM2O │ IOM2C  │
-  └─────┬──────────────────────────────┘
-        │
-  Weighted Ensemble Score
-        │
-  (Live tab only)
-  Micro-Motion Score  ──┐
-  (nose displacement)   │
-                        ▼
-               Fused Final Verdict
-               🟢 REAL  /  🔴 SPOOF
+┌───────────────────┐
+│   Face Detection  │  ← RetinaFace (optional pre-crop)
+└────────┬──────────┘
+         │
+         ▼
+┌────────────────────────────────────────────────────────────────┐
+│                    Parallel Ensemble Inference                  │
+│                    (ThreadPoolExecutor)                         │
+│                                                                 │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌──────────┐ │
+│  │  ICM2O     │  │  IOM2C     │  │ modelrgb   │  │  SASF /  │ │
+│  │  Model     │  │  Model     │  │  (ONNX)    │  │MiniFASNet│ │
+│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └────┬─────┘ │
+│        │               │               │               │       │
+│        └───────────────┴───────────────┴───────────────┘       │
+│                               │                                 │
+│                    Weighted Score Fusion                        │
+│              w₁·s₁ + w₂·s₂ + w₃·s₃ + w₄·s₄                   │
+└───────────────────────────────┬────────────────────────────────┘
+                                │
+                                ▼
+                    ┌───────────────────────┐
+                    │  Micro-Motion Signal  │  ← Optical flow / frame delta
+                    └───────────┬───────────┘
+                                │
+                                ▼
+                    ┌───────────────────────┐
+                    │   Final Liveness      │
+                    │   Decision + Score    │
+                    └───────────────────────┘
 ```
 
 ---
 
-## 📦 Models
+## Ensemble Models
 
-| Model     | Description                                    | Default Weight | Default Threshold |
-| --------- | ---------------------------------------------- | -------------- | ----------------- |
-| **SASF**  | Silent-Face-Anti-Spoofing (MobileNet)          | 15%            | 0.0094            |
-| **FLRGB** | Face Liveness Detection Model-RGB (ONNX)       | 15%            | 0.0553            |
-| **ICM2O** | Instance-Aware Domain Generalisation CVPR 2023 | 35%            | 0.9980            |
-| **IOM2C** | Instance-Aware Domain Generalisation CVPR 2023 | 35%            | 0.9944            |
+| #   | Model ID              | Format         | Architecture                        | Input Size    | Role                      |
+| --- | --------------------- | -------------- | ----------------------------------- | ------------- | ------------------------- |
+| 1   | **ICM2O**             | PyTorch `.pth` | MobileNetV2-based binary classifier | 224×224       | RGB texture analysis      |
+| 2   | **IOM2C**             | PyTorch `.pth` | Depth-aware CNN variant             | 224×224       | Cross-modal spoofing cues |
+| 3   | **modelrgb**          | ONNX `.onnx`   | Lightweight CNN (ONNX-optimized)    | 128×128       | Fast RGB liveness scoring |
+| 4   | **SASF / MiniFASNet** | PyTorch `.pth` | MiniFASNet (Silent Anti-Spoof)      | 80×80 / 80×80 | Multi-scale patch fusion  |
 
-> Weights are auto-normalised — if a model fails to load, its weight is redistributed to the remaining models.
+All four models run in **parallel threads** and their softmax confidence scores are fused using configurable weights:
+
+```python
+final_score = w1 * score_icm2o + w2 * score_iom2c + w3 * score_modelrgb + w4 * score_sasf
+```
+
+Default weights: `[0.25, 0.25, 0.25, 0.25]` — adjustable via Gradio sliders at inference time.
 
 ---
 
-## 📁 Project Structure
+## Fine-Tuning Pipeline
 
-```
-face-anti-spoofing/
-│
-├── app.py                  # Gradio UI — two tabs (Image + Live)
-├── liveness_temporal.py    # Micro-motion liveness checker
-├── IADG.py                 # FLRGB + ICM2O + IOM2C model wrappers
-├── SASF.py                 # Silent-Face-Anti-Spoofing wrapper
-├── detector.py             # RetinaFace face detector wrapper
-├── models.py               # AENet architecture (ResNet-18 based)
-├── tsn_predict.py          # TSN prediction utilities
-├── requirements.txt        # Python dependencies
-│
-├── src/                    # Source utilities
-└── weights/                # Model weight files (.pth / .onnx)
-    ├── modelrgb.onnx
-    ├── ICM2O.pth
-    ├── IOM2C.pth
-    └── ...
-```
+### Datasets
+
+Two Kaggle datasets are used for fine-tuning:
+
+| Dataset                | Source | Samples         | Classes      |
+| ---------------------- | ------ | --------------- | ------------ |
+| **anti-spoofing-live** | Kaggle | ~10,000+ frames | Live / Spoof |
+| **LCC_FASD**           | Kaggle | ~5,000+ frames  | Live / Spoof |
+
+Both datasets are combined, balanced, and split into train/val/test sets during preparation.
+
+> **Note:** Kaggle API credentials must be configured before downloading. See [Installation](#installation).
 
 ---
 
-## 🚀 Getting Started
+### Dataset Preparation
 
-### 1. Clone the repo
+The dataset preparation script handles downloading, extraction, directory normalization, class balancing, and train/val/test splitting.
 
 ```bash
-git clone https://github.com/Mothieram/face-anti-spoofing.git
+# Step 1 — Download and prepare datasets
+python finetune/prepare_dataset.py \
+    --datasets anti-spoofing-live lcc_fasd \
+    --output_dir data/finetune \
+    --val_split 0.15 \
+    --test_split 0.10 \
+    --seed 42
+```
+
+Expected output structure after preparation:
+
+```
+data/
+└── finetune/
+    ├── train/
+    │   ├── live/
+    │   └── spoof/
+    ├── val/
+    │   ├── live/
+    │   └── spoof/
+    └── test/
+        ├── live/
+        └── spoof/
+```
+
+---
+
+### Training Configuration
+
+Each model has an individual configuration file under `finetune/configs/`. The general training arguments are:
+
+| Argument            | Default         | Description                                                      |
+| ------------------- | --------------- | ---------------------------------------------------------------- |
+| `--model`           | `icm2o`         | Target model to fine-tune (`icm2o`, `iom2c`, `modelrgb`, `sasf`) |
+| `--epochs`          | `20`            | Total training epochs                                            |
+| `--batch_size`      | `32`            | Batch size per step                                              |
+| `--lr`              | `1e-4`          | Initial learning rate                                            |
+| `--freeze_backbone` | `True`          | Freeze backbone, train classifier head only (Phase 1)            |
+| `--unfreeze_after`  | `5`             | Unfreeze full network after N epochs (Phase 2)                   |
+| `--checkpoint_dir`  | `checkpoints/`  | Directory to save epoch checkpoints                              |
+| `--resume_from`     | `None`          | Path to a `.pth` checkpoint to resume from                       |
+| `--data_dir`        | `data/finetune` | Root of prepared dataset                                         |
+| `--amp`             | `True`          | Use mixed precision (FP16) training                              |
+| `--patience`        | `5`             | Early stopping patience (epochs without val improvement)         |
+
+---
+
+### Checkpoint Resumption
+
+Training is designed to be **fully resumable** from any saved epoch checkpoint. This is critical for long Kaggle GPU sessions (which terminate after a fixed time limit).
+
+```bash
+# Resume from a specific checkpoint (e.g., after epoch 2)
+python finetune/train.py \
+    --model icm2o \
+    --resume_from checkpoints/icm2o_epoch2.pth \
+    --epochs 20
+```
+
+Checkpoints are saved at the end of every epoch:
+
+```
+checkpoints/
+├── icm2o_epoch1.pth
+├── icm2o_epoch2.pth   ← current pause point
+├── icm2o_best.pth     ← best val-accuracy checkpoint
+└── ...
+```
+
+Each checkpoint stores:
+
+```python
+{
+    "epoch": int,
+    "model_state_dict": ...,
+    "optimizer_state_dict": ...,
+    "scheduler_state_dict": ...,
+    "val_loss": float,
+    "val_acc": float,
+    "config": dict
+}
+```
+
+---
+
+## Repository Structure
+
+```
+face-anti-spoofing/                    ← root (model-finetuning branch)
+│
+├── app.py                             ← Gradio UI entry point
+├── requirements.txt                   ← Python dependencies
+├── README.md                          ← This file
+│
+├── models/                            ← Model loader & inference wrappers
+│   ├── __init__.py
+│   ├── icm2o.py
+│   ├── iom2c.py
+│   ├── modelrgb_onnx.py
+│   └── sasf_minifasnet.py
+│
+├── ensemble/                          ← Ensemble fusion logic
+│   ├── __init__.py
+│   ├── parallel_runner.py             ← ThreadPoolExecutor inference
+│   └── fusion.py                      ← Weighted score fusion
+│
+├── micro_motion/                      ← Micro-motion liveness module
+│   ├── __init__.py
+│   └── motion_detector.py
+│
+├── finetune/                          ← Fine-tuning pipeline (this branch)
+│   ├── prepare_dataset.py             ← Dataset download & preparation
+│   ├── train.py                       ← Main training script
+│   ├── evaluate.py                    ← Post-training evaluation
+│   ├── export_onnx.py                 ← PyTorch → ONNX export
+│   ├── configs/
+│   │   ├── icm2o_config.yaml
+│   │   ├── iom2c_config.yaml
+│   │   ├── modelrgb_config.yaml
+│   │   └── sasf_config.yaml
+│   └── utils/
+│       ├── dataset.py                 ← Dataset class & augmentations
+│       ├── metrics.py                 ← HTER, APCER, BPCER
+│       └── callbacks.py              ← Checkpoint, EarlyStopping
+│
+├── checkpoints/                       ← Saved model checkpoints
+│   └── .gitkeep
+│
+├── data/                              ← Dataset root (gitignored)
+│   └── .gitkeep
+│
+├── weights/                           ← Pre-trained & fine-tuned weights
+│   └── .gitkeep
+│
+└── scripts/                           ← Utility scripts
+    ├── download_weights.py
+    └── benchmark.py
+```
+
+---
+
+## Installation
+
+### Prerequisites
+
+- Python 3.10+
+- CUDA 11.8+ (recommended for GPU training)
+- Kaggle API configured (`~/.kaggle/kaggle.json`)
+
+### 1. Clone the branch
+
+```bash
+git clone -b model-finetuning https://github.com/Mothieram/face-anti-spoofing.git
 cd face-anti-spoofing
 ```
 
-### 2. Install dependencies
+### 2. Create virtual environment
+
+```bash
+python -m venv venv
+# Windows (PowerShell)
+.\venv\Scripts\Activate.ps1
+
+# Linux / macOS
+source venv/bin/activate
+```
+
+### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Add model weights
+### 4. Configure Kaggle API
 
-Place your model weight files inside the `weights/` folder:
+```bash
+# Place your kaggle.json token in:
+# Windows: C:\Users\<user>\.kaggle\kaggle.json
+# Linux:   ~/.kaggle/kaggle.json
 
+# Or set environment variables:
+set KAGGLE_USERNAME=your_username
+set KAGGLE_KEY=your_api_key
 ```
-weights/
-├── modelrgb.onnx
-├── ICM2O.pth
-└── IOM2C.pth
+
+### 5. Download pre-trained weights
+
+```bash
+python scripts/download_weights.py
 ```
 
-### 4. Run locally
+---
+
+## Usage
+
+### Running Fine-Tuning
+
+**Phase 1 — Backbone frozen, head only (fast convergence):**
+
+```bash
+python finetune/train.py \
+    --model icm2o \
+    --epochs 10 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --freeze_backbone True \
+    --data_dir data/finetune \
+    --checkpoint_dir checkpoints/
+```
+
+**Phase 2 — Full network unfrozen (refinement):**
+
+```bash
+python finetune/train.py \
+    --model icm2o \
+    --epochs 20 \
+    --batch_size 16 \
+    --lr 5e-5 \
+    --freeze_backbone False \
+    --resume_from checkpoints/icm2o_best.pth \
+    --data_dir data/finetune \
+    --checkpoint_dir checkpoints/
+```
+
+**Resume from paused Kaggle session:**
+
+```bash
+python finetune/train.py \
+    --model icm2o \
+    --resume_from checkpoints/icm2o_epoch2.pth \
+    --epochs 20
+```
+
+---
+
+### Inference
+
+**Single image:**
+
+```python
+from ensemble.parallel_runner import EnsembleRunner
+
+runner = EnsembleRunner(weights=[0.25, 0.25, 0.25, 0.25])
+result = runner.predict("path/to/face_image.jpg")
+
+print(result)
+# {'label': 'Live', 'score': 0.923, 'model_scores': {...}}
+```
+
+**Webcam / real-time:**
+
+```bash
+python scripts/benchmark.py --source 0 --show
+```
+
+---
+
+### Gradio Demo
 
 ```bash
 python app.py
 ```
 
-Open `http://localhost:7860` in your browser.
+Open `http://127.0.0.1:7860` in your browser.
 
 ---
 
-## 🖥️ UI Tabs
+## Gradio UI Features
 
-### 📷 Image Tab
+The Gradio interface exposes the following controls:
 
-- Upload a photo or capture via webcam
-- Runs all 4 models in parallel
-- Shows per-model score + confidence + ensemble verdict
-- Annotates bounding box on result image
-
-### 🎥 Live Tab
-
-- Streams webcam in real time
-- Collects **15 frames** of facial landmark data
-- Runs micro-motion analysis (nose displacement variance + FFT periodicity check)
-- Fuses motion score with spoof ensemble for final verdict
-- **Result locks on screen** after verdict — press 🔄 Reset to scan again
+| Feature                  | Description                                                               |
+| ------------------------ | ------------------------------------------------------------------------- |
+| **Image / Webcam Input** | Upload a face image or use live webcam feed                               |
+| **Model Weight Sliders** | Individually tune each model's contribution to the ensemble score (w₁–w₄) |
+| **Liveness Score Bar**   | Visual confidence gauge — Live vs. Spoof                                  |
+| **Per-Model Breakdown**  | Shows individual score from each of the 4 models                          |
+| **Micro-Motion Toggle**  | Enable/disable micro-motion liveness auxiliary check                      |
+| **Threshold Slider**     | Adjust the Live/Spoof decision boundary (default: 0.5)                    |
 
 ---
 
-## ⚙️ Configuration
+## Results & Metrics
 
-Both tabs share these controls in the UI:
+Evaluation metrics used:
 
-**Model Thresholds** _(collapsed accordion)_
-| Slider | Default | Effect |
-|---|---|---|
-| SASF threshold | 0.0094 | Score above this → spoof |
-| FLRGB threshold | 0.2808 | Score above this → spoof |
-| ICM2O threshold | 0.9980 | Score above this → spoof |
-| IOM2C threshold | 0.9944 | Score above this → spoof |
+| Metric    | Description                                      |
+| --------- | ------------------------------------------------ |
+| **HTER**  | Half Total Error Rate — primary benchmark metric |
+| **APCER** | Attack Presentation Classification Error Rate    |
+| **BPCER** | Bona Fide Presentation Classification Error Rate |
+| **AUC**   | Area Under ROC Curve                             |
 
-**Model Weights** _(open accordion)_
-| Slider | Default | Effect |
-|---|---|---|
-| SASF weight | 0.15 | Contribution to ensemble |
-| FLRGB weight | 0.15 | Contribution to ensemble |
-| ICM2O weight | 0.35 | Contribution to ensemble |
-| IOM2C weight | 0.35 | Contribution to ensemble |
-
-**Live tab only**
-| Slider | Default | Effect |
-|---|---|---|
-| Motion weight | 0.35 | How much micro-motion contributes vs spoof models |
+> Fine-tuning results will be updated here after completing full training runs on Kaggle. Current state: paused at **epoch 2 / 20** for ICM2O. Checkpoint saved at `checkpoints/icm2o_epoch2.pth`.
 
 ---
 
-## 🔬 Micro-Motion Liveness (`liveness_temporal.py`)
+## Differences from Main Branch
 
-Detects whether a face is real by analysing **involuntary micro-movements** across frames:
+| Aspect               | `main` branch                   | `model-finetuning` branch               |
+| -------------------- | ------------------------------- | --------------------------------------- |
+| **Purpose**          | Inference + HF Space deployment | Fine-tuning pipeline                    |
+| **Dataset code**     | Not included                    | Full Kaggle download + prep             |
+| **Training scripts** | Not included                    | `finetune/train.py` + configs           |
+| **Checkpoint logic** | Not included                    | Per-epoch save + resume                 |
+| **ONNX export**      | Pre-exported weights only       | `finetune/export_onnx.py`               |
+| **Gradio UI**        | Production UI                   | Extended with fine-tuning metrics panel |
 
-```
-Real face  →  small random nose jitter  →  variance > threshold  →  LIVE
-Photo      →  zero movement             →  variance ≈ 0          →  SPOOF
-Replay     →  mechanical/periodic motion →  FFT dominant freq high → SPOOF
-```
+---
 
-**Three sub-scores combined:**
+## Roadmap
 
-| Sub-score              | Weight | What it checks                        |
-| ---------------------- | ------ | ------------------------------------- |
-| Displacement variance  | 50%    | Is there any natural movement?        |
-| Naturalness            | 30%    | Fraction of frames with movement      |
-| Anti-periodicity (FFT) | 20%    | Catches replay attacks (phone wobble) |
+- [x] Dataset preparation pipeline (anti-spoofing-live + LCC_FASD)
+- [x] Checkpoint-based training with epoch resumption
+- [x] Mixed precision (FP16/AMP) training support
+- [x] Per-model YAML config files
+- [ ] Complete fine-tuning of all 4 ensemble models on Kaggle
+- [ ] ONNX export of fine-tuned weights
+- [ ] Quantization-aware training (QAT) for edge deployment
+- [ ] Evaluation on CelebA-Spoof and SiW benchmarks
+- [ ] Push fine-tuned weights to HuggingFace Hub
+- [ ] TensorRT conversion for NVIDIA Jetson deployment
 
-All motion is **normalised by inter-eye distance** — works regardless of face distance from camera.
+---
 
-### API
+## Citations
 
-```python
-from liveness_temporal import TemporalLivenessChecker, fuse_with_spoof_score
+If you use this project or build upon it, please consider citing the following works that underpin the models and techniques used.
 
-checker = TemporalLivenessChecker(min_frames=15)
+### MiniFASNet / Silent Face Anti-Spoofing
 
-# Feed landmarks per frame (RetinaFace 5-point, shape (5,2))
-for landmarks in all_landmarks:
-    checker.add_frame(landmarks)
-
-# Evaluate once ready
-if checker.ready:
-    result = checker.evaluate()
-    print(result.is_live)    # bool
-    print(result.score)      # 0.0 → 1.0
-    print(result.reason)     # detailed breakdown string
-
-# Fuse with spoof ensemble score
-is_live, fused_score, reason = fuse_with_spoof_score(
-    spoof_score=0.85,         # from your ensemble (0=real, 1=spoof)
-    temporal_result=result,
-    spoof_weight=0.65,
-    temporal_weight=0.35,
-)
+```bibtex
+@inproceedings{zhousimple2021,
+  title     = {A Simple Baseline for Semi-supervised Semantic Segmentation with Strong Data Augmentation},
+  author    = {George, Anjith and Marcel, Sébastien},
+  booktitle = {Proceedings of the IEEE/CVF International Conference on Computer Vision},
+  year      = {2021}
+}
 ```
 
----
-
-## 📋 Requirements
-
-```
-torch
-torchvision
-opencv-python-headless
-onnxruntime
-omegaconf
-easydict
-gradio
-numpy
-scipy
+```bibtex
+@misc{minivision2020silent,
+  author       = {minivision-ai},
+  title        = {Silent-Face-Anti-Spoofing},
+  year         = {2020},
+  publisher    = {GitHub},
+  howpublished = {\url{https://github.com/minivision-ai/Silent-Face-Anti-Spoofing}},
+  note         = {Accessed: 2024}
+}
 ```
 
+### CDCNPP / Central Difference Convolutional Networks
+
+```bibtex
+@inproceedings{yu2020cdcn,
+  title     = {Searching Central Difference Convolutional Networks for Face Anti-Spoofing},
+  author    = {Yu, Zitong and Zhao, Chenxu and Wang, Zezheng and Qin, Yunxiao and Su, Zhuo and Li, Xiaobai and Zhou, Feng and Zhao, Guoying},
+  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  pages     = {5295--5305},
+  year      = {2020}
+}
+```
+
+### ONNX Runtime
+
+```bibtex
+@misc{onnxruntime,
+  author       = {{ONNX Runtime developers}},
+  title        = {ONNX Runtime},
+  year         = {2021},
+  howpublished = {\url{https://onnxruntime.ai}},
+  note         = {Version 1.x}
+}
+```
+
+### RetinaFace (Face Detection)
+
+```bibtex
+@inproceedings{deng2020retinaface,
+  title     = {RetinaFace: Single-Shot Multi-Level Face Localisation in the Wild},
+  author    = {Deng, Jiankang and Guo, Jia and Ververas, Evangelos and Kotsia, Irene and Zafeiriou, Stefanos},
+  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year      = {2020}
+}
+```
+
+### LCC_FASD Dataset
+
+```bibtex
+@article{Datta2020LCCFASD,
+  title   = {LCC-FASD: A Low-Cost and Compact Face Anti-Spoofing Dataset},
+  author  = {Datta, Pankaj and others},
+  journal = {arXiv preprint},
+  year    = {2020},
+  url     = {https://kaggle.com/datasets}
+}
+```
+
+### PyTorch
+
+```bibtex
+@incollection{pytorch2019,
+  title     = {PyTorch: An Imperative Style, High-Performance Deep Learning Library},
+  author    = {Paszke, Adam and Gross, Sam and Massa, Francisco and Lerer, Adam and Bradbury, James and Chanan, Gregory and Killeen, Trevor and Lin, Zeming and Gimelshein, Natalia and Antiga, Luca and others},
+  booktitle = {Advances in Neural Information Processing Systems 32},
+  pages     = {8024--8035},
+  year      = {2019},
+  publisher = {Curran Associates, Inc.}
+}
+```
+
+### Gradio
+
+```bibtex
+@article{abid2019gradio,
+  title   = {Gradio: Hassle-Free Sharing and Testing of ML Models in the Wild},
+  author  = {Abid, Abubakar and Abdalla, Ali and Abid, Ali and Khan, Dawood and Alfozan, Abdulrahman and Zou, James},
+  journal = {arXiv preprint arXiv:1906.02569},
+  year    = {2019}
+}
+```
+
+## Acknowledgements
+
+- [minivision-ai](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing) for the MiniFASNet / SASF architecture and training methodology
+- [Zitong Yu et al.](https://arxiv.org/abs/2003.04092) for the Central Difference CNN (CDCNPP) paper
+- [InsightFace / RetinaFace](https://github.com/deepinsight/insightface) for the face detection backbone
+- [ONNX Runtime](https://onnxruntime.ai/) for cross-platform efficient model inference
+- [Kaggle](https://kaggle.com/) for GPU compute and dataset hosting
+- [Hugging Face Spaces](https://huggingface.co/spaces) for free deployment of the Gradio demo
+
 ---
 
-## 🔗 References
+<div align="center">
 
-- **SASF** — [Silent-Face-Anti-Spoofing](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing)
-- **FLRGB** — [Face Liveness Detection Model-RGB, ModelScope IIC](https://modelscope.cn/models/iic/cv_manual_face-liveness_flrgb)
-- **IADG (ICM2O / IOM2C)** — [Instance-Aware Domain Generalisation for Face Anti-Spoofing, CVPR 2023](https://openaccess.thecvf.com/content/CVPR2023/papers/Zhou_Instance-Aware_Domain_Generalization_for_Face_Anti-Spoofing_CVPR_2023_paper.pdf)
-- **RetinaFace** — Face detector providing 5-point landmarks
+Made with ❤️ by [Mothieram](https://github.com/Mothieram) ·
 
----
+[⬆ Back to Top](#️-face-anti-spoofing--model-fine-tuning-branch)
 
-## 🗺️ Roadmap
-
-- [ ] rPPG remote pulse detection (heartbeat from skin color)
-- [ ] Meta-learner for learned ensemble fusion weights
-- [ ] Fine-tune on domain-specific data (office lighting, phone cameras)
-- [ ] Knowledge distillation — single fast model from ensemble
-- [ ] Multi-face support
-
----
-
-## 👤 Author
-
-**Mothieram** — [HuggingFace](https://huggingface.co/mothieram) · [GitHub](https://github.com/Mothieram)
+</div>
