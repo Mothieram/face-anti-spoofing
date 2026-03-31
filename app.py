@@ -526,6 +526,7 @@ Press **🔄 Reset** to clear temporal history.
 
     # HuggingFace Spaces handles routing itself; share=True not needed there.
     is_space = bool(os.getenv("SPACE_ID"))
+    app.queue(api_open=False)
     app.launch(
         server_name="0.0.0.0",
         server_port=int(os.getenv("PORT", "7860")),
