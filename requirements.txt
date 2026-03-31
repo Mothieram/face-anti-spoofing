@@ -2,10 +2,15 @@ torch
 torchvision
 torchaudio
 opencv-python-headless==4.10.0.84
-onnxruntime-gpu==1.19.2
+onnxruntime==1.19.2
 omegaconf
 easydict
-gradio
+gradio==4.44.1
+gradio_client==1.3.0
+huggingface_hub==0.25.2
+fastapi==0.115.2
+starlette==0.40.0
+jinja2==3.1.4
 tqdm
 kaggle
 numpy

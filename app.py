@@ -12,6 +12,30 @@ import sys
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# ── Patch gradio_client bug: additionalProperties=False crashes schema gen ──
+try:
+    import gradio_client.utils as _gcu
+
+    _orig_get_type = _gcu.get_type
+    def _safe_get_type(schema):
+        if not isinstance(schema, dict):
+            return "any"
+        return _orig_get_type(schema)
+    _gcu.get_type = _safe_get_type
+
+    _orig_j2p = _gcu._json_schema_to_python_type
+    def _safe_j2p(schema, defs=None):
+        if not isinstance(schema, dict):
+            return "any"
+        if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], dict):
+            schema = {k: v for k, v in schema.items() if k != "additionalProperties"}
+        return _orig_j2p(schema, defs)
+    _gcu._json_schema_to_python_type = _safe_j2p
+except Exception:
+    pass
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 import cv2
 import numpy as np
 import gradio as gr
@@ -283,9 +307,9 @@ def run_image(input_image, thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c, thr_cdcn,
 
 def process_live_frame(
     frame,
-    checker: TemporalLivenessChecker,
+    checker,
     frozen_frame,           # last annotated result frame (or None)
-    verdict_done: bool,     # True = verdict already shown, stop processing
+    verdict_done,           # True = verdict already shown, stop processing
     thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c, thr_cdcn,
     w_sasf, w_flrgb, w_icm2o, w_iom2c, w_cdcn,
     temporal_weight,
@@ -351,7 +375,7 @@ def process_live_frame(
     return annotated, status, False, None
 
 
-def reset_checker(checker: TemporalLivenessChecker):
+def reset_checker(checker):
     checker.reset()
     return checker, False, None, "🔄 Session reset — collecting new frames…"
 
@@ -452,7 +476,7 @@ Press **🔄 Reset** to clear temporal history.
 """)
                 checker_state      = gr.State(TemporalLivenessChecker())
                 verdict_done_state = gr.State(False)
-                frozen_frame_state = gr.State(None)
+                frozen_frame_state = gr.State(value=None)  # type: ignore
 
                 with gr.Row():
                     with gr.Column():
@@ -500,7 +524,15 @@ Press **🔄 Reset** to clear temporal history.
 - **Micro-motion** — Nose-tip displacement variance + FFT periodicity (anti-replay)
 """)
 
-    app.launch()
+    # HuggingFace Spaces handles routing itself; share=True not needed there.
+    is_space = bool(os.getenv("SPACE_ID"))
+    app.queue(api_open=False)
+    app.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.getenv("PORT", "7860")),
+        show_api=False,
+        share=not is_space,
+    )
 
 
 if __name__ == '__main__':

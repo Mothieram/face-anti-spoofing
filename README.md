@@ -1,21 +1,13 @@
 ---
-title: Face Anti-Spoofing — Model Fine-Tuning
+title: Face Anti-Spoofing - Model Fine-Tuning
 emoji: 🛡️
 colorFrom: blue
 colorTo: indigo
 sdk: gradio
-sdk_version: "4.x"
+sdk_version: "4.44.1"
+python_version: "3.10"
 app_file: app.py
 pinned: false
-license: mit
-tags:
-  - face-anti-spoofing
-  - liveness-detection
-  - computer-vision
-  - deep-learning
-  - onnx
-  - pytorch
-  - fine-tuning
 ---
 
 <div align="center">
@@ -92,20 +84,20 @@ Input Frame (BGR / RGB)
 └────────┬──────────┘
          │
          ▼
-┌────────────────────────────────────────────────────────────────┐
-│                    Parallel Ensemble Inference                  │
-│                    (ThreadPoolExecutor)                         │
-│                                                                 │
+┌───────────────────────────────────────────────────────────────┐
+│                    Parallel Ensemble Inference                │
+│                    (ThreadPoolExecutor)                       │
+│                                                               │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌──────────┐ │
 │  │  ICM2O     │  │  IOM2C     │  │ modelrgb   │  │  SASF /  │ │
 │  │  Model     │  │  Model     │  │  (ONNX)    │  │MiniFASNet│ │
 │  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └────┬─────┘ │
-│        │               │               │               │       │
-│        └───────────────┴───────────────┴───────────────┘       │
-│                               │                                 │
-│                    Weighted Score Fusion                        │
-│              w₁·s₁ + w₂·s₂ + w₃·s₃ + w₄·s₄                   │
-└───────────────────────────────┬────────────────────────────────┘
+│        │               │               │               │      │
+│        └───────────────┴───────────────┴───────────────┘      │
+│                               │                               │
+│                    Weighted Score Fusion                      │
+│              w₁·s₁ + w₂·s₂ + w₃·s₃ + w₄·s₄                    │
+└───────────────────────────────┬───────────────────────────────┘
                                 │
                                 ▼
                     ┌───────────────────────┐
