@@ -286,6 +286,11 @@ def run_training(args: argparse.Namespace) -> str:
     )
 
     model = build_cdcnpp(device=device)
+    if torch.cuda.device_count() > 1 and device.type == "cuda":
+        print("Using", torch.cuda.device_count(), "GPUs")
+        model = torch.nn.DataParallel(model)
+        
+    model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
