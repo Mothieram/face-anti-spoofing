@@ -1,18 +1,23 @@
 """
 recalibrate_thresholds.py
 =========================
-After fine-tuning, the original thresholds (0.9980, 0.9944, 0.085, 0.2808)
-may no longer be optimal.  This script sweeps the val set and finds the best
-threshold for each model at a specified BPCER (false-rejection) budget.
-
-It uses the same find_best_threshold() function already in your IADG.py.
+After fine-tuning, the original thresholds may no longer be optimal.
+This script sweeps the val set and finds the best threshold for each model
+at specified BPCER (false-rejection) budgets.
 
 Usage:
-  python recalibrate_thresholds.py
+  python training/recalibrate_thresholds.py
+  python training/recalibrate_thresholds.py --model IOM2C
 """
 
-import os, sys, cv2, torch
+import argparse
+import os
+import sys
+
+import cv2
 import numpy as np
+import torch
+from torchvision import transforms
 from tqdm import tqdm
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -20,27 +25,36 @@ sys.path.insert(0, REPO_ROOT)
 
 from IADG import aFaceDetect, find_best_threshold, Framework, _load_checkpoint
 from IADG import crop_from_5landmarks
-from torchvision import transforms
 
 FINETUNED_DIR = os.path.join(REPO_ROOT, "finetuned_weights")
-DATA_VAL      = os.path.join(REPO_ROOT, "data", "val")
-WEIGHTS_DIR   = os.path.join(REPO_ROOT, "weights")
-DEVICE        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DATA_VAL = os.path.join(REPO_ROOT, "data", "val")
+WEIGHTS_DIR = os.path.join(REPO_ROOT, "weights")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ── target: allow at most X% real faces to be rejected (BPCER budget) ─────────
-BPCER_BUDGETS = [10, 20, 30]   # percent
+# target: allow at most X% real faces to be rejected (BPCER budget)
+BPCER_BUDGETS = [10, 20, 30]  # percent
+
+
+def _parse_args():
+    parser = argparse.ArgumentParser(description="Recalibrate thresholds for finetuned IADG model(s)")
+    parser.add_argument(
+        "--model",
+        choices=["ICM2O", "IOM2C", "both"],
+        default="both",
+        help="Choose which model to calibrate",
+    )
+    return parser.parse_args()
 
 
 def load_finetuned_iadg(model_name):
     """Load Framework from finetuned .pth (state-dict only, not full checkpoint)."""
-    # We still need model_defs from the original checkpoint
-    orig_ckpt  = _load_checkpoint(
+    orig_ckpt = _load_checkpoint(
         os.path.join(WEIGHTS_DIR, f"{model_name}.pth.tar"), map_location="cpu"
     )
     model_defs = orig_ckpt["args"].model
-    transform  = orig_ckpt["args"].transform
+    transform = orig_ckpt["args"].transform
 
-    ft_path    = os.path.join(FINETUNED_DIR, f"{model_name}_finetuned.pth")
+    ft_path = os.path.join(FINETUNED_DIR, f"{model_name}_finetuned.pth")
     state_dict = torch.load(ft_path, map_location="cpu")
 
     model = Framework(**model_defs["params"])
@@ -53,7 +67,7 @@ def load_finetuned_iadg(model_name):
         transforms.ToTensor(),
         transforms.Normalize(mean=transform["mean"], std=transform["std"]),
     ])
-    return model, tfm, 0.7   # crop margin same as original aSpoof
+    return model, tfm, 0.7
 
 
 def collect_val_images():
@@ -81,7 +95,7 @@ def run_iadg_model(model, tfm, crop_margin, img_rgb, landmarks):
 def calibrate(model_name, score_fn):
     print(f"\n--- Calibrating {model_name} ---")
     detector = aFaceDetect()
-    val_imgs  = collect_val_images()
+    val_imgs = collect_val_images()
 
     spoof_probs = []
     skipped = 0
@@ -98,7 +112,7 @@ def calibrate(model_name, score_fn):
         spoof_probs.append([prob, lbl])
 
     if not spoof_probs:
-        print("  No samples scored — check DATA_VAL path.")
+        print("  No samples scored - check DATA_VAL path.")
         return
 
     print(f"  scored {len(spoof_probs)} images, skipped {skipped} (no/multi face)")
@@ -109,22 +123,21 @@ def calibrate(model_name, score_fn):
     print()
 
 
-def main():
-    # ── ICM2O ────────────────────────────────────────────────────────────────
-    ft_path = os.path.join(FINETUNED_DIR, "ICM2O_finetuned.pth")
-    if os.path.exists(ft_path):
-        model, tfm, crop = load_finetuned_iadg("ICM2O")
-        calibrate("ICM2O", lambda img, bbox, lm: run_iadg_model(model, tfm, crop, img, lm))
-    else:
-        print("ICM2O_finetuned.pth not found — run finetune_iadg.py --model ICM2O first")
+def _calibrate_if_available(model_name):
+    ft_path = os.path.join(FINETUNED_DIR, f"{model_name}_finetuned.pth")
+    if not os.path.exists(ft_path):
+        print(f"{model_name}_finetuned.pth not found - run finetune_iadg.py --model {model_name} first")
+        return
+    model, tfm, crop = load_finetuned_iadg(model_name)
+    calibrate(model_name, lambda img, bbox, lm: run_iadg_model(model, tfm, crop, img, lm))
 
-    # ── IOM2C ────────────────────────────────────────────────────────────────
-    ft_path = os.path.join(FINETUNED_DIR, "IOM2C_finetuned.pth")
-    if os.path.exists(ft_path):
-        model, tfm, crop = load_finetuned_iadg("IOM2C")
-        calibrate("IOM2C", lambda img, bbox, lm: run_iadg_model(model, tfm, crop, img, lm))
-    else:
-        print("IOM2C_finetuned.pth not found — run finetune_iadg.py --model IOM2C first")
+
+def main():
+    args = _parse_args()
+    if args.model in ("ICM2O", "both"):
+        _calibrate_if_available("ICM2O")
+    if args.model in ("IOM2C", "both"):
+        _calibrate_if_available("IOM2C")
 
 
 if __name__ == "__main__":
