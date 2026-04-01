@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import traceback
+import inspect
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Patch gradio_client bug: additionalProperties=False crashes schema gen ──
@@ -77,7 +78,10 @@ def _load_finetuned_iadg_if_exists(spoof_model, filename, label):
         return
     try:
         import torch
-        state = torch.load(ft_path, map_location="cpu")
+        try:
+            state = torch.load(ft_path, map_location="cpu", weights_only=True)
+        except TypeError:
+            state = torch.load(ft_path, map_location="cpu")
         spoof_model.model.load_state_dict(state, strict=False)
         spoof_model.model.eval()
         logger.info("%s: loaded fine-tuned weights from %s", label, ft_path)
@@ -130,8 +134,8 @@ try:
     ModelD = IADG.aFaceDetect()
     Model1 = SASF.aSASF(threshold=0.0094)
     Model2 = IADG.aSpoofONNX('modelrgb', threshold=0.0553)
-    Model3 = IADG.aSpoof('ICM2O',  threshold=0.9980)
-    Model4 = IADG.aSpoof('IOM2C',  threshold=0.9944)
+    Model3 = IADG.aSpoof('ICM2O',  threshold=0.564862)
+    Model4 = IADG.aSpoof('IOM2C',  threshold=0.218523)
     cdcn_weights = _pick_existing_file([
         os.path.join(FINETUNED_DIR, "cdcnpp.pth"),
         os.path.join(BASE_DIR, "weights", "cdcnpp.pth"),
@@ -385,7 +389,7 @@ def reset_checker(checker):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def demo():
-    with gr.Blocks(title="Face Anti-Spoofing Detector", theme=gr.themes.Soft()) as app:
+    with gr.Blocks(title="Face Anti-Spoofing Detector") as app:
 
         gr.Markdown("""
 # 🛡️ Face Anti-Spoofing Detector
@@ -397,8 +401,8 @@ def demo():
             with gr.Row():
                 thr_sasf  = gr.Slider(0.0, 1.0, value=0.70, step=0.0001, label="SASF threshold")
                 thr_flrgb = gr.Slider(0.0, 1.0, value=0.45, step=0.0001, label="FLRGB threshold")
-                thr_icm2o = gr.Slider(0.0, 1.0, value=0.55, step=0.0001, label="ICM2O threshold")
-                thr_iom2c = gr.Slider(0.0, 1.0, value=0.55, step=0.0001, label="IOM2C threshold")
+                thr_icm2o = gr.Slider(0.0, 1.0, value=0.564862, step=0.0001, label="ICM2O threshold")
+                thr_iom2c = gr.Slider(0.0, 1.0, value=0.218523, step=0.0001, label="IOM2C threshold")
                 thr_cdcn  = gr.Slider(0.0, 1.0, value=0.53, step=0.0001, label="CDCN++ threshold")
 
         thresholds = [thr_sasf, thr_flrgb, thr_icm2o, thr_iom2c, thr_cdcn]
@@ -527,12 +531,17 @@ Press **🔄 Reset** to clear temporal history.
     # HuggingFace Spaces handles routing itself; share=True not needed there.
     is_space = bool(os.getenv("SPACE_ID"))
     app.queue(api_open=False)
-    app.launch(
-        server_name="0.0.0.0",
-        server_port=int(os.getenv("PORT", "7860")),
-        show_api=False,
-        share=not is_space,
-    )
+    launch_kwargs = {
+        "server_name": "0.0.0.0",
+        "server_port": int(os.getenv("PORT", "7860")),
+        "share": not is_space,
+    }
+    launch_params = inspect.signature(app.launch).parameters
+    if "theme" in launch_params:
+        launch_kwargs["theme"] = gr.themes.Soft()
+    if "show_api" in launch_params:
+        launch_kwargs["show_api"] = True
+    app.launch(**launch_kwargs)
 
 
 if __name__ == '__main__':

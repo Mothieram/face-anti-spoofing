@@ -44,7 +44,10 @@ def load(path: str, device: Optional[str] = None) -> CDCNpp:
 
     model = CDCNpp().to(d)
 
-    ckpt = torch.load(path, map_location=d)
+    try:
+        ckpt = torch.load(path, map_location=d, weights_only=True)
+    except TypeError:
+        ckpt = torch.load(path, map_location=d)
     state_dict = ckpt.get("state_dict", ckpt)
 
     # Remove DataParallel prefix when present.
